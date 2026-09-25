@@ -48,12 +48,18 @@ jobs:
         id: npm-lint
         run: pnpm run lint
 
+      - name: Typecheck
+        id: npm-typecheck
+        run: pnpm run typecheck
+
       - name: Test
         id: npm-ci-test
         run: pnpm run ci-test
 
+  # Runs this repo's own turbo tasks twice through the action. The second run
+  # must be served entirely from the GitHub Actions cache ("FULL TURBO").
   test-action:
-    name: ci / action
+    name: ci / action (${{ matrix.os }})
     if: >-
       ${{
         github.event_name != 'push' ||
@@ -62,6 +68,46 @@ jobs:
           !contains(github.event.head_commit.message, '[ci skip]')
         )
       }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Project
+        id: setup-project
+        uses: pixpilot/github-actions/setup-pnpm-project@v1
+
+      - name: Build dist
+        id: npm-package
+        run: pnpm run build
+
+      - name: Test Local Action
+        id: test-action
+        uses: ./
+        with:
+          # Unique per run and OS so every CI run starts with a cold cache
+          cache-prefix: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ runner.os }}-
+
+      - name: Populate remote cache
+        shell: bash
+        run: pnpm exec turbo run build test --cache=remote:rw
+
+      - name: Expect a full remote cache hit
+        shell: bash
+        run: |
+          pnpm exec turbo run build test --cache=remote:rw | tee turbo-output.log
+          grep -q "FULL TURBO" turbo-output.log || { echo "::error::Expected FULL TURBO from the remote cache"; exit 1; }
+
+  # Proves the cache persists across jobs: a fresh runner restores what
+  # `test-action` saved, without building anything.
+  test-action-persistence:
+    name: ci / action (restore in new job)
+    needs: test-action
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -80,4 +126,10 @@ jobs:
         id: test-action
         uses: ./
         with:
-          milliseconds: 1000
+          cache-prefix: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ runner.os }}-
+
+      - name: Expect a full remote cache hit
+        shell: bash
+        run: |
+          pnpm exec turbo run build test --cache=remote:rw | tee turbo-output.log
+          grep -q "FULL TURBO" turbo-output.log || { echo "::error::Expected FULL TURBO from the remote cache"; exit 1; }

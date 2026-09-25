@@ -1,106 +1,58 @@
-import * as core from '@actions/core';
+import process from 'node:process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { run } from '../src/main';
 
-const waitMock = vi.fn();
+const mocks = vi.hoisted(() => ({
+  server: vi.fn(),
+  launchServer: vi.fn(),
+  setFailed: vi.fn(),
+}));
 
-// Mock @actions/core - vitest will use __mocks__/@actions/core.ts
-vi.mock('@actions/core');
-vi.mock('../src/wait', () => ({ wait: waitMock }));
+vi.mock('../src/lib/server', () => ({ server: mocks.server }));
+vi.mock('../src/lib/server/utils', () => ({ launchServer: mocks.launchServer }));
+vi.mock('../src/lib/core', () => ({ core: { setFailed: mocks.setFailed } }));
 
-const { run } = await import('../src/main');
+const originalArgv = process.argv;
 
-describe('main.ts', () => {
+describe('run', () => {
   beforeEach(() => {
-    vi.mocked(core.getInput).mockImplementation(() => '500');
-    vi.mocked(waitMock).mockResolvedValue('done!');
+    process.argv = ['node', 'dist/setup/index.js'];
   });
 
   afterEach(() => {
+    process.argv = originalArgv;
     vi.resetAllMocks();
   });
 
-  describe('__mocks__/core.ts verification', () => {
-    it('should have core functions mocked from __mocks__/core.ts', () => {
-      // Verify that core functions are actually mocked functions
-      expect(vi.isMockFunction(core.debug)).toBe(true);
-      expect(vi.isMockFunction(core.error)).toBe(true);
-      expect(vi.isMockFunction(core.info)).toBe(true);
-      expect(vi.isMockFunction(core.getInput)).toBe(true);
-      expect(vi.isMockFunction(core.setOutput)).toBe(true);
-      expect(vi.isMockFunction(core.setFailed)).toBe(true);
-      expect(vi.isMockFunction(core.warning)).toBe(true);
-    });
-
-    it('should allow mocking of core functions', () => {
-      // Test that we can mock and call core functions
-      vi.mocked(core.debug).mockImplementation((message: string) => {
-        console.log(`DEBUG: ${message}`);
-      });
-
-      core.debug('test message');
-      expect(vi.mocked(core.debug)).toHaveBeenCalledWith('test message');
-    });
-  });
-
-  it('sets the time output', async () => {
+  it('launches the background server', async () => {
     await run();
 
-    expect(vi.mocked(core.setOutput)).toHaveBeenNthCalledWith(
-      1,
-      'time',
-      // Match HH:MM:SS
-      expect.stringMatching(/^\d{2}:\d{2}:\d{2}/u),
-    );
+    expect(mocks.launchServer).toHaveBeenCalledTimes(1);
+    expect(mocks.server).not.toHaveBeenCalled();
   });
 
-  it('calls core.info and core.debug functions during execution', async () => {
-    await run();
-
-    // Verify info calls
-    expect(vi.mocked(core.info)).toHaveBeenCalledWith(
-      'Starting GitHub Action with 500 milliseconds wait time',
-    );
-    expect(vi.mocked(core.info)).toHaveBeenCalledWith(
-      'GitHub Action completed successfully',
-    );
-
-    // Verify debug calls
-    expect(vi.mocked(core.debug)).toHaveBeenCalledWith('Waiting 500 milliseconds ...');
-    // Debug should be called 3 times (waiting message + 2 timestamps)
-    expect(vi.mocked(core.debug)).toHaveBeenCalledTimes(3);
-  });
-
-  it('sets a failed status', async () => {
-    vi.mocked(core.getInput).mockClear().mockReturnValueOnce('this is not a number');
-
-    vi.mocked(waitMock)
-      .mockClear()
-      .mockRejectedValueOnce(new Error('milliseconds is not a number'));
+  it('runs the server itself in the daemon process', async () => {
+    process.argv = ['node', 'dist/setup/index.js', '--server'];
 
     await run();
 
-    // Verify error logging
-    expect(vi.mocked(core.error)).toHaveBeenCalledWith(
-      'Action failed: milliseconds is not a number',
-    );
-
-    // Verify setFailed is called
-    expect(vi.mocked(core.setFailed)).toHaveBeenNthCalledWith(
-      1,
-      'milliseconds is not a number',
-    );
+    expect(mocks.server).toHaveBeenCalledTimes(1);
+    expect(mocks.launchServer).not.toHaveBeenCalled();
   });
 
-  it('logs and handles non-Error failures without setting failed status', async () => {
-    vi.mocked(core.getInput).mockClear().mockReturnValueOnce('500');
-
-    vi.mocked(waitMock).mockClear().mockRejectedValueOnce('unexpected failure');
+  it('fails the step when the server cannot start', async () => {
+    mocks.launchServer.mockRejectedValue(new Error('EADDRINUSE'));
 
     await run();
 
-    expect(vi.mocked(core.error)).toHaveBeenCalledWith(
-      'Action failed: unexpected failure',
-    );
-    expect(vi.mocked(core.setFailed)).not.toHaveBeenCalled();
+    expect(mocks.setFailed).toHaveBeenCalledWith('EADDRINUSE');
+  });
+
+  it('ignores non-Error rejections', async () => {
+    mocks.launchServer.mockRejectedValue('boom');
+
+    await run();
+
+    expect(mocks.setFailed).not.toHaveBeenCalled();
   });
 });

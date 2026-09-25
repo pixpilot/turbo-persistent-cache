@@ -1,0 +1,13 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "inputs": ["src/**", "esbuild.config.cjs", "tsconfig*.json", "package.json"],
+      "outputs": ["dist/**"]
+    },
+    "test": {
+      "inputs": ["src/**", "test/**", "__mocks__/**", "vitest.config.js"],
+      "outputs": ["coverage/**"]
+    }
+  }
+}

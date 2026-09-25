@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "types": ["vitest/globals"],
     "strict": true,
     "declaration": true,
