@@ -1,4 +1,4 @@
-# Contributing to <projectName>
+# Contributing to Turbo Persistent Cache
 
 Thank you for your interest in contributing! 🎉
 
